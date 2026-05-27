@@ -3,7 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'          # 推送 v1.0.0 这类 tag 时自动触发
+      - 'v*'
+
+# ← 必须加这个，否则 Actions 没权限创建 Release
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -40,5 +44,3 @@ jobs:
             1. 下载 `ClaudeQuickDown.exe`
             2. 双击运行，点击「是」允许管理员权限
             3. 按照提示填写 API Key，然后回车开始安装
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
