@@ -1,0 +1,28 @@
+[package]
+name = "claude-quick-down"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "ClaudeQuickDown"
+path = "src/main.rs"
+
+[dependencies]
+is_elevated = "0.1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+futures = "0.3"
+winreg = "0.55"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+] }
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+strip = true
+lto = true
