@@ -175,6 +175,16 @@ async fn run_full_install() {
 // ---------------------------------------------------------------------------
 
 fn run_api_config_only() {
+    // 检测 cc-switch 是否在托管，如果是则给出专项提示
+    if is_ccswitch_managing() {
+        warn_ccswitch_managing();
+        if !confirm("  仍要继续写入本程序的配置？[y/N] ") {
+            println!();
+            println!("  已跳过。建议按上方步骤在 cc-switch 里配置。");
+            return;
+        }
+        println!();
+    }
     section_header("填写 API 信息");
     show_platform_table();
 
@@ -422,6 +432,44 @@ async fn fetch_ccswitch_version() -> Option<String> {
         .text().await.ok()?;
     let tag = text.split("\"tag_name\":").nth(1)?.split('"').nth(1)?.to_string();
     Some(tag)
+}
+
+
+// ---------------------------------------------------------------------------
+// cc-switch 状态检测
+// ---------------------------------------------------------------------------
+
+/// 检测 cc-switch 是否正在托管 Claude Code 配置
+/// 判断依据：~/.claude.json 里存在 "primaryApiKey": "any"
+fn is_ccswitch_managing() -> bool {
+    let profile = env::var("USERPROFILE").unwrap_or_default();
+    let path = PathBuf::from(&profile).join(".claude.json");
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    // cc-switch 写入的标志字段
+    content.contains("\"primaryApiKey\"") && content.contains("\"any\"")
+}
+
+fn warn_ccswitch_managing() {
+    println!();
+    println!("  ┌─────────────────────────────────────────────────┐");
+    println!("  │  [!!] 检测到 cc-switch 正在托管 Claude Code      │");
+    println!("  └─────────────────────────────────────────────────┘");
+    println!();
+    println!("  cc-switch 在后台运行时，会持续将它管理的 provider");
+    println!("  配置写回 ~/.claude/config.json，覆盖本程序的设置。");
+    println!();
+    println!("  ── 推荐做法 ──────────────────────────────────────");
+    println!("  在 cc-switch 中添加并激活你的 DeepSeek provider：");
+    println!("    1. 打开 cc-switch");
+    println!("    2. 点击「添加 Provider」");
+    println!("    3. 类型选 Custom（Anthropic 兼容）");
+    println!("    4. 填入 API Key 和 Base URL");
+    println!("       Base URL: https://api.deepseek.com/anthropic");
+    println!("    5. 点击激活");
+    println!();
+    println!("  ── 或者 ──────────────────────────────────────────");
+    println!("  退出 cc-switch 托盘后，本程序的写入将持续生效。");
+    println!();
 }
 
 // ---------------------------------------------------------------------------
