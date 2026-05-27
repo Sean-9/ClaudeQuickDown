@@ -3,19 +3,23 @@ mod mirror;
 
 use std::env;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::process::Command;
 
 const VERSION: &str = "1.0.0";
+
+// ---------------------------------------------------------------------------
+// 入口
+// ---------------------------------------------------------------------------
 
 #[tokio::main]
 async fn main() {
     show_banner();
 
-    // ── 欢迎 + 安装清单 ────────────────────────────────────────────────────
-    let npm_global = std::path::PathBuf::from(
+    // ── 安装清单预览 ───────────────────────────────────────────────────────
+    let npm_global = PathBuf::from(
         env::var("APPDATA").unwrap_or_else(|_| r"C:\Users\用户\AppData\Roaming".into()),
-    )
-    .join("npm");
+    ).join("npm");
 
     println!("本程序将自动完成以下安装：\n");
     println!(r"  ①  Node.js v20.12.2   →   C:\Program Files\nodejs");
@@ -23,8 +27,7 @@ async fn main() {
     println!("  ③  Claude Code        →   {}", npm_global.display());
     println!();
     println!("安装过程全程静默，无需手动点击任何弹窗。");
-    println!("预计耗时：5 ~ 15 分钟（视网速而定）");
-    println!();
+    println!("预计耗时：5 ~ 15 分钟（视网速而定）\n");
 
     if !confirm("确认开始安装？[y/N] ") {
         println!("\n已取消。");
@@ -32,7 +35,8 @@ async fn main() {
     }
 
     // ── 安装阶段 ───────────────────────────────────────────────────────────
-    section_header("安装进度");
+    println!();
+    section_header("正在安装");
 
     // 1. 测速
     step(1, 5, "测速国内镜像节点");
@@ -42,12 +46,12 @@ async fn main() {
     // 2. Node.js
     step(2, 5, "检测 / 安装 Node.js");
     if installer::is_node_sufficient() {
-        let ver = installer::get_node_version_str().unwrap_or_default();
-        ok(&format!("{} 已满足要求（≥ v18），跳过", ver));
+        ok(&format!("{} 已满足要求（≥ v18），跳过",
+            installer::get_node_version_str().unwrap_or_default()));
     } else {
         match installer::get_node_version_str() {
             Some(v) => println!("     版本 {} 过低，将重新安装...", v),
-            None    => println!("     未检测到 Node.js，开始下载安装..."),
+            None    => println!("     未检测到 Node.js，开始下载..."),
         }
         match installer::install_node_executor(&fastest_mirror).await {
             Ok(_)  => { installer::refresh_environment(); ok("Node.js 安装完成"); }
@@ -60,7 +64,6 @@ async fn main() {
     if installer::is_git_installed() {
         ok("Git 已安装，跳过");
     } else {
-        println!("     未检测到 Git，开始下载安装...");
         match installer::install_git_executor(&fastest_mirror).await {
             Ok(_)  => { installer::refresh_environment(); ok("Git 安装完成"); }
             Err(e) => warn(&format!("Git 安装失败（非必须，继续）：{}", e)),
@@ -75,10 +78,8 @@ async fn main() {
 
     let npm_path = format!("{};{}", npm_global_str, env::var("PATH").unwrap_or_default());
     match Command::new("cmd")
-        .args([
-            "/C", "npm", "install", "-g", "@anthropic-ai/claude-code",
-            &format!("--registry={}", registry),
-        ])
+        .args(["/C", "npm", "install", "-g", "@anthropic-ai/claude-code",
+               &format!("--registry={}", registry)])
         .env("PATH", &npm_path)
         .output()
     {
@@ -87,13 +88,9 @@ async fn main() {
             fail(&format!("NPM 安装失败：\n{}", String::from_utf8_lossy(&o.stderr)));
             return wait_enter();
         }
-        Err(e) => {
-            fail(&format!("NPM 执行异常：{}", e));
-            return wait_enter();
-        }
+        Err(e) => { fail(&format!("NPM 执行异常：{}", e)); return wait_enter(); }
     }
 
-    // PATH 注入 + 广播
     let _ = installer::inject_npm_path_to_registry(&npm_global_str);
     installer::broadcast_environment_change();
     installer::refresh_environment();
@@ -112,29 +109,35 @@ async fn main() {
         warn("claude 命令暂时不可用，重新打开终端后应自动生效");
     }
 
-    // 跳过新手引导
-    let profile = env::var("USERPROFILE").unwrap_or_default();
-    let _ = std::fs::write(
-        std::path::PathBuf::from(&profile).join(".claude.json"),
-        r#"{"hasCompletedOnboarding": true}"#,
-    );
+    // 写 onboarding 标志到 ~/.claude.json
+    write_onboarding_flag();
 
     println!();
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  ✅  Node.js、Git、Claude Code 已全部安装完成！");
+    println!("  ✅  Node.js、Git、Claude Code 全部安装完成！");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    // ── API 配置（装完再收集，可跳过）────────────────────────────────────
+    // ── 可选：安装 cc-switch ───────────────────────────────────────────────
+    println!();
+    let install_ccs = prompt_ccswitch();
+    if install_ccs {
+        install_ccswitch(&fastest_mirror).await;
+    }
+
+    // ── API 配置 ───────────────────────────────────────────────────────────
     println!();
     section_header("配置 API 信息（可跳过，之后随时补填）");
-    setup_api_interactive();
+    let (api_key, base_url, model) = collect_api_config();
+
+    // 双写：环境变量 + ~/.claude/config.json
+    apply_api_config(&api_key, &base_url, &model);
 
     // ── 完成 ───────────────────────────────────────────────────────────────
     println!();
     println!("╔══════════════════════════════════════════════════╗");
     println!("║   🎉  全部完成！                                 ║");
     println!("║                                                  ║");
-    println!("║   重新打开一个终端（CMD / PowerShell），输入：   ║");
+    println!("║   重新打开终端（CMD / PowerShell），输入：       ║");
     println!("║       claude                                     ║");
     println!("║   即可开始使用 Claude Code。                     ║");
     println!("╚══════════════════════════════════════════════════╝");
@@ -142,46 +145,252 @@ async fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// API 配置交互
+// cc-switch 安装
 // ---------------------------------------------------------------------------
 
-fn setup_api_interactive() {
+fn prompt_ccswitch() -> bool {
+    println!("──────────────────────────────────────────────────");
+    println!("  可选：安装 cc-switch（API Key 管理工具）");
+    println!("──────────────────────────────────────────────────");
+    println!();
+    println!("  cc-switch 是一个桌面工具，可以帮你：");
+    println!("  • 保存 / 切换多个 API Key（DeepSeek、Claude、GPT 等）");
+    println!("  • 可视化管理中转地址和模型配置");
+    println!("  • 官网：ccswitch.io");
+    println!();
+    confirm("  是否同时安装 cc-switch？[y/N] ")
+}
+
+async fn install_ccswitch(mirror_url: &str) {
+    println!();
+    println!("  正在获取 cc-switch 最新版本...");
+
+    // 使用 GitHub API 获取最新版本（如失败则用内置兜底版本）
+    let version = fetch_ccswitch_latest_version().await
+        .unwrap_or_else(|| "v3.15.0".to_string());
+    println!("  版本：{}", version);
+
+    // cc-switch MSI 下载 URL（GitHub Releases）
+    let ver_no_v = version.trim_start_matches('v');
+    let url = format!(
+        "https://github.com/farion1231/cc-switch/releases/download/{}/CC-Switch-{}_{}_x64-setup.exe",
+        version, "cc-switch", ver_no_v
+    );
+    // 备用：MSI 格式
+    let url_msi = format!(
+        "https://github.com/farion1231/cc-switch/releases/download/{}/CC-Switch_{}_x64_en-US.msi",
+        version, ver_no_v
+    );
+
+    let temp = std::env::temp_dir().join("cc-switch-setup.exe");
+    println!("  下载地址：{}", url);
+
+    // 优先尝试 exe，失败则尝试 msi
+    let download_result = installer::download_file_public(&url, &temp).await
+        .or(installer::download_file_public(&url_msi, &temp).await);
+
+    match download_result {
+        Ok(_) => {
+            println!("  正在运行安装程序...");
+            match Command::new(&temp).spawn() {
+                Ok(_)  => ok("cc-switch 安装程序已启动，请按照界面提示完成安装"),
+                Err(e) => warn(&format!("无法启动安装程序：{}", e)),
+            }
+            // 稍等让安装程序窗口弹出
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        Err(e) => {
+            warn(&format!("cc-switch 下载失败：{}", e));
+            println!("  可手动前往 https://github.com/farion1231/cc-switch/releases 下载");
+        }
+    }
+}
+
+async fn fetch_ccswitch_latest_version() -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .ok()?;
+
+    let resp = client
+        .get("https://api.github.com/repos/farion1231/cc-switch/releases/latest")
+        .header("User-Agent", "ClaudeQuickDown")
+        .send().await.ok()?;
+
+    // 只取 tag_name 行，不引入 serde_json
+    let text = resp.text().await.ok()?;
+    // 简单字符串解析："tag_name":"v3.15.0"
+    let tag = text.split("\"tag_name\":")
+        .nth(1)?
+        .split('"')
+        .nth(1)?
+        .to_string();
+
+    Some(tag)
+}
+
+// ---------------------------------------------------------------------------
+// API 配置收集
+// ---------------------------------------------------------------------------
+
+fn collect_api_config() -> (String, String, String) {
     // 平台参考表
     println!("  支持以下平台，选一个填入即可：\n");
-    println!("  {:<22} {:<36} {}", "平台", "Key 格式示例", "获取地址");
-    println!("  {}", "─".repeat(90));
-    println!("  {:<22} {:<36} {}", "Anthropic (Claude)",  "sk-ant-api03-xxxxxxxx",         "console.anthropic.com");
-    println!("  {:<22} {:<36} {}", "OpenAI / GPT",        "sk-proj-xxxxxxxx",              "platform.openai.com");
-    println!("  {:<22} {:<36} {}", "DeepSeek",            "sk-xxxxxxxxxxxxxxxx",           "platform.deepseek.com");
-    println!("  {:<22} {:<36} {}", "智谱 AI (GLM/ChatGLM)","xxxxxxxx.xxxxxxxxxxxxxxxx",    "open.bigmodel.cn");
-    println!("  {:<22} {:<36} {}", "月之暗面 (Kimi)",     "sk-xxxxxxxxxxxxxxxx",           "platform.moonshot.cn");
-    println!("  {:<22} {:<36} {}", "阿里 百炼 (通义)",    "sk-xxxxxxxxxxxxxxxx",           "bailian.console.aliyun.com");
+    println!("  {:<24} {:<42} {}", "平台", "Key 格式示例", "获取 / 文档");
+    println!("  {}", "─".repeat(95));
+    println!("  {:<24} {:<42} {}",
+        "Anthropic (Claude)",    "sk-ant-api03-xxxxxxxx",
+        "console.anthropic.com");
+    println!("  {:<24} {:<42} {}",
+        "DeepSeek ★推荐",       "sk-xxxxxxxxxxxxxxxx",
+        "platform.deepseek.com");
+    println!("  {:<24} {:<42} {}",
+        "  └ DeepSeek 中转 URL", "https://api.deepseek.com/anthropic",
+        "api-docs.deepseek.com/zh-cn/");
+    println!("  {:<24} {:<42} {}",
+        "OpenAI / GPT",          "sk-proj-xxxxxxxx",
+        "platform.openai.com");
+    println!("  {:<24} {:<42} {}",
+        "智谱 AI (GLM)",         "xxxxxxxx.xxxxxxxxxxxxxxxx",
+        "open.bigmodel.cn");
+    println!("  {:<24} {:<42} {}",
+        "月之暗面 (Kimi)",       "sk-xxxxxxxxxxxxxxxx",
+        "platform.moonshot.cn");
+    println!("  {:<24} {:<42} {}",
+        "阿里 百炼 (通义)",      "sk-xxxxxxxxxxxxxxxx",
+        "bailian.console.aliyun.com");
     println!();
 
-    let api_key = prompt_optional("  API Key（回车跳过）");
+    let api_key = prompt_optional(
+        "  API Key（回车跳过）\n  提示：使用 DeepSeek 时，Key 填 DeepSeek 的，Base URL 填上方中转 URL"
+    );
+
     let base_url = prompt_optional(
-        "  中转 / Base URL（使用官方直连则回车跳过）\n  示例：https://api.example.com",
+        "  Base URL / 中转地址（使用官方 Claude 直连则回车跳过）\n  DeepSeek 示例：https://api.deepseek.com/anthropic"
     );
+
     let model = prompt_optional(
-        "  指定模型（选填，回车跳过）\n  示例：claude-sonnet-4-5  /  deepseek-chat  /  gpt-4o",
+        "  指定模型（选填，回车跳过）\n  示例：deepseek-chat  /  claude-sonnet-4-5  /  gpt-4o"
     );
 
-    println!();
+    (api_key, base_url, model)
+}
 
-    let mut wrote_any = false;
-    if !api_key.is_empty()  { set_env_var("ANTHROPIC_API_KEY",  &api_key);  wrote_any = true; }
-    if !base_url.is_empty() { set_env_var("ANTHROPIC_BASE_URL", &base_url); wrote_any = true; }
-    if !model.is_empty()    { set_env_var("ANTHROPIC_MODEL",    &model);    wrote_any = true; }
+// ---------------------------------------------------------------------------
+// 配置写入（双写：环境变量 + ~/.claude/config.json）
+// ---------------------------------------------------------------------------
 
-    if !wrote_any {
+fn apply_api_config(api_key: &str, base_url: &str, model: &str) {
+    if api_key.is_empty() && base_url.is_empty() && model.is_empty() {
+        println!();
         println!("  （已跳过，之后需要配置时可运行以下命令）");
         println!();
         println!(r#"  setx ANTHROPIC_API_KEY  "你的Key""#);
-        println!(r#"  setx ANTHROPIC_BASE_URL "中转地址（可选）""#);
-        println!(r#"  setx ANTHROPIC_MODEL    "模型名称（可选）""#);
-    } else {
-        ok("环境变量已写入，重新打开终端后生效");
+        println!(r#"  setx ANTHROPIC_BASE_URL "中转地址（如 https://api.deepseek.com/anthropic）""#);
+        println!(r#"  setx ANTHROPIC_MODEL    "模型名称（如 deepseek-chat）""#);
+        return;
     }
+
+    println!();
+    println!("  正在写入配置...");
+
+    // 1. setx 写入注册表（新开终端生效）
+    if !api_key.is_empty()  { setx_env("ANTHROPIC_API_KEY",  api_key); }
+    if !base_url.is_empty() { setx_env("ANTHROPIC_BASE_URL", base_url); }
+    if !model.is_empty()    { setx_env("ANTHROPIC_MODEL",    model); }
+
+    // 2. 当前进程立即生效（本窗口内 claude 命令可用）
+    if !api_key.is_empty()  { env::set_var("ANTHROPIC_API_KEY",  api_key); }
+    if !base_url.is_empty() { env::set_var("ANTHROPIC_BASE_URL", base_url); }
+    if !model.is_empty()    { env::set_var("ANTHROPIC_MODEL",    model); }
+
+    // 3. 写入 ~/.claude/config.json（Claude Code 直接读取）
+    match write_claude_config_json(api_key, base_url, model) {
+        Ok(path) => ok(&format!("~/.claude/config.json 已写入\n       路径：{}", path.display())),
+        Err(e)   => warn(&format!("~/.claude/config.json 写入失败：{}", e)),
+    }
+}
+
+/// 写入 ~/.claude/config.json，格式：
+/// {
+///   "env": {
+///     "ANTHROPIC_API_KEY": "...",
+///     "ANTHROPIC_BASE_URL": "...",   // 可选
+///     "ANTHROPIC_MODEL": "..."        // 可选
+///   }
+/// }
+fn write_claude_config_json(
+    api_key: &str,
+    base_url: &str,
+    model: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let profile = env::var("USERPROFILE")?;
+    let claude_dir = PathBuf::from(&profile).join(".claude");
+    std::fs::create_dir_all(&claude_dir)?;
+
+    let config_path = claude_dir.join("config.json");
+
+    // 读取已有内容（避免覆盖其他字段）
+    let existing: String = std::fs::read_to_string(&config_path).unwrap_or_default();
+    let mut entries: Vec<(String, String)> = vec![];
+
+    // 解析已有 env 字段（简单行级解析）
+    let mut in_env = false;
+    for line in existing.lines() {
+        let t = line.trim();
+        if t.contains("\"env\"") && t.contains('{') { in_env = true; continue; }
+        if in_env && t == "}" || in_env && t == "}," { in_env = false; continue; }
+        if in_env {
+            if let Some(pos) = t.find(':') {
+                let k = t[..pos].trim().trim_matches('"').to_string();
+                let v = t[pos+1..].trim().trim_end_matches(',')
+                    .trim().trim_matches('"').to_string();
+                // 保留非 ANTHROPIC_ 字段
+                if !k.starts_with("ANTHROPIC_") {
+                    entries.push((k, v));
+                }
+            }
+        }
+    }
+
+    // 写入新值
+    if !api_key.is_empty()  { entries.push(("ANTHROPIC_API_KEY".into(),  api_key.into())); }
+    if !base_url.is_empty() { entries.push(("ANTHROPIC_BASE_URL".into(), base_url.into())); }
+    if !model.is_empty()    { entries.push(("ANTHROPIC_MODEL".into(),    model.into())); }
+
+    let env_lines: Vec<String> = entries.iter()
+        .map(|(k, v)| format!("    \"{}\": \"{}\"", k, v))
+        .collect();
+
+    let json = format!(
+        "{{\n  \"env\": {{\n{}\n  }}\n}}\n",
+        env_lines.join(",\n")
+    );
+
+    std::fs::write(&config_path, &json)?;
+    Ok(config_path)
+}
+
+/// 写入 ~/.claude.json 的 onboarding 标志（只写，不清空原有字段）
+fn write_onboarding_flag() {
+    let profile = env::var("USERPROFILE").unwrap_or_default();
+    let path = PathBuf::from(&profile).join(".claude.json");
+
+    // 已存在则追加 key，否则新建
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let json = if existing.trim().starts_with('{') && existing.trim().len() > 2 {
+        // 已有内容，插入字段（避免重复）
+        if existing.contains("hasCompletedOnboarding") {
+            existing // 已有则不改
+        } else {
+            existing.trim_end().trim_end_matches('}').to_string()
+                + ",\n  \"hasCompletedOnboarding\": true\n}"
+        }
+    } else {
+        "{\"hasCompletedOnboarding\": true}\n".to_string()
+    };
+
+    let _ = std::fs::write(&path, json);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,10 +439,10 @@ fn prompt_optional(label: &str) -> String {
     s.trim().to_string()
 }
 
-fn set_env_var(key: &str, value: &str) {
+fn setx_env(key: &str, value: &str) {
     match Command::new("cmd").args(["/C", "setx", key, value]).output() {
         Ok(o) if o.status.success() =>
-            ok(&format!("{} 已写入", key)),
+            ok(&format!("环境变量 {} 已永久写入", key)),
         Ok(o) =>
             warn(&format!("{} 写入失败：{}", key, String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) =>

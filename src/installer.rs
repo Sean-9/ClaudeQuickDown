@@ -173,7 +173,7 @@ fn build_git_url(base: &str, version: &str) -> String {
 // 下载（带进度，每 5% 打印一次）
 // ---------------------------------------------------------------------------
 
-async fn download_file(
+pub async fn download_file_public(
     url: &str,
     dest: &Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -234,7 +234,7 @@ async fn download_with_retry(
         // 每次重试前先删掉残留文件
         let _ = tokio::fs::remove_file(dest).await;
 
-        match download_file(url, dest).await {
+        match download_file_public(url, dest).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 last_err = e;
