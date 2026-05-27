@@ -1,12 +1,14 @@
-<center>
+<div align="center">
 
 # ClaudeQuickDown
 
-**Claude Code 国内一键安装器** — 双击即用，无需任何技术基础
+> **Claude Code 国内一键安装器** — 双击即用，无需任何技术基础
 
-</center>
+<br>
 
-[系统要求](#系统要求) · [下载](https://github.com/Sean-9/ClaudeQuickDown/releases) · [工作流程](#工作流程) · [安装完成后](#安装完成后) · [常见问题](#常见问题) · [使用协议](#使用协议)
+**[系统要求](#系统要求)** &nbsp;·&nbsp; **[下载](https://github.com/Sean-9/ClaudeQuickDown/releases)** &nbsp;·&nbsp; **[工作流程](#工作流程)** &nbsp;·&nbsp; **[安装完成后](#安装完成后)** &nbsp;·&nbsp; **[常见问题](#常见问题)** &nbsp;·&nbsp; **[使用协议](#使用协议)**
+
+</div>
 
 ---
 
@@ -20,7 +22,7 @@ Claude Code 是 Anthropic 推出的 AI 编程助手，可以在终端里帮你�
 
 ---
 
-## 系统要求 {#系统要求}
+## 系统要求
 
 | 项目 | 要求 |
 |------|------|
@@ -31,7 +33,7 @@ Claude Code 是 Anthropic 推出的 AI 编程助手，可以在终端里帮你�
 
 ---
 
-## 下载 {#下载}
+## 下载
 
 在本页面的 [Releases](https://github.com/Sean-9/ClaudeQuickDown/releases) 下载 `ClaudeQuickDown.exe`，双击运行即可。
 
@@ -39,7 +41,7 @@ Claude Code 是 Anthropic 推出的 AI 编程助手，可以在终端里帮你�
 
 ---
 
-## 工作流程 {#工作流程}
+## 工作流程
 
 程序启动时自动检测当前状态，走对应路径：
 
@@ -114,7 +116,7 @@ Claude Code 是 Anthropic 推出的 AI 编程助手，可以在终端里帮你�
 
 ---
 
-## 安装完成后 {#安装完成后}
+## 安装完成后
 
 **重新打开一个终端**（CMD 或 PowerShell），输入：
 
@@ -126,7 +128,7 @@ claude
 
 ---
 
-## 常见问题 {#常见问题}
+## 常见问题
 
 **Q：提示「Windows 已保护你的电脑」怎么办？**
 
@@ -184,6 +186,6 @@ claude
 
 ---
 
-## 使用协议 {#使用协议}
+## 使用协议
 
 仅限个人学习、研究与交流使用，禁止任何形式的商业用途。
