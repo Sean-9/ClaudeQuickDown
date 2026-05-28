@@ -14,8 +14,11 @@
 
 ## 这是什么？
 
-Claude Code 一键安装工具，简化安装流程，零基础可用，可自动下载配置 Node.js、npm 及相关依赖等
-**ClaudeQuickDown 做的事就一件**：你只需要双击、填 API Key（可跳过），剩下的全自动搞定。
+Claude Code 一键安装工具，简化安装流程，零基础可用
+
+可自动下载配置 Node.js、npm 及相关依赖等
+
+**ClaudeQuickDown 做的事就一件**：你只需要双击、填 API Key（可跳过），剩下的安装全自动搞定。
 
 ---
 
