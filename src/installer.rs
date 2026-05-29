@@ -343,7 +343,12 @@ pub async fn install_git_executor(
 
     println!("   🔧 正在安装 Git {}...", GIT_VERSION);
     let status = Command::new(&git_exe_path)
-        .args(["/VERYSILENT", "/NORESTART"])
+        .args([
+            "/VERYSILENT",
+            "/NORESTART",
+            "/SUPPRESSMSGBOXES",  // 禁止任何弹窗（避免 PATH 过长弹窗卡住流程）
+            "/TASKS=!modifypath", // 不让 Git 安装器自己动 PATH，我们手动加
+        ])
         .spawn()?
         .wait()?;
 
@@ -352,6 +357,13 @@ pub async fn install_git_executor(
     if !status.success() {
         return Err(format!("安装进程退出码 {}", status.code().unwrap_or(-1)).into());
     }
+
+    // Git 安装器没有修改 PATH，我们手动把 Git 的 cmd 目录加进去
+    let git_cmd_dir = r"C:\Program Files\Git\cmd".to_string();
+    let git_bin_dir = r"C:\Program Files\Git\bin".to_string();
+    println!("   [PATH] 手动注入 Git 路径...");
+    let _ = inject_npm_path_to_registry(&git_cmd_dir);
+    let _ = inject_npm_path_to_registry(&git_bin_dir);
 
     println!("   ✅ Git 安装成功");
     Ok(())
