@@ -74,7 +74,7 @@ jobs:
       - name: Verify clean environment
         shell: powershell
         run: |
-          Write-Output "=== 确认初始环境干净 ==="
+          Write-Output "=== Verify Clean Environment ==="
           Write-Output "Node:   $(if (Get-Command node   -EA SilentlyContinue) { node --version   } else { 'NOT FOUND (clean) [OK]' })"
           Write-Output "Git:    $(if (Get-Command git    -EA SilentlyContinue) { git --version    } else { 'NOT FOUND (clean) [OK]' })"
           Write-Output "Claude: $(if (Get-Command claude -EA SilentlyContinue) { claude --version } else { 'NOT FOUND (clean) [OK]' })"
@@ -98,7 +98,7 @@ jobs:
           $inputText  = $inputLines -join "`r`n"
           $inputText | Out-File -FilePath ".\stdin_input.txt" -Encoding ascii
 
-          Write-Output "=== 开始运行安装器 ==="
+          Write-Output "=== Running Installer ==="
           $proc = Start-Process `
             -FilePath      ".\ClaudeQuickDown.exe" `
             -RedirectStandardInput  ".\stdin_input.txt" `
@@ -110,11 +110,11 @@ jobs:
           $done = $proc.WaitForExit(1200000)
           if (-not $done) {
             $proc.Kill()
-            Write-Output "=== 安装器超时（20min），输出如下 ==="
+            Write-Output "=== Installer Timeout (20min), output below ==="
             Get-Content ".\install_stdout.txt" -ErrorAction SilentlyContinue
             exit 1
           }
-          Write-Output "安装器退出，ExitCode = $($proc.ExitCode)"
+          Write-Output "Installer exited with code $($proc.ExitCode)"
         continue-on-error: true   # 即使安装器异常退出，也继续跑验证步骤
 
       # ── 打印安装器完整输出（方便排查）────────────
@@ -122,9 +122,9 @@ jobs:
         if: always()
         shell: powershell
         run: |
-          Write-Output "=== 安装器 stdout ==="
+          Write-Output "=== Installer stdout ==="
           Get-Content ".\install_stdout.txt" -ErrorAction SilentlyContinue
-          Write-Output "=== 安装器 stderr ==="
+          Write-Output "=== Installer stderr ==="
           Get-Content ".\install_stderr.txt" -ErrorAction SilentlyContinue
 
       # ── 刷新 PATH，让新装的工具可见 ──────────────
@@ -136,43 +136,43 @@ jobs:
           $env:Path   = "$systemPath;$userPath"
           Write-Output "PATH refreshed"
           # 将刷新后的 PATH 写入 GITHUB_ENV，让后续 step 继承
-          echo "PATH=$env:Path" >> $env:GITHUB_ENV
+          "PATH=$env:Path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # ── 验证安装结果 ──────────────────────────────
       - name: Check installation results
         shell: powershell
         run: |
-          Write-Output "=== 安装结果验证 ==="
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          Write-Output "=== Installation Results ==="
           $pass = $true
 
           if (Get-Command node -EA SilentlyContinue) {
             Write-Output "[OK]  Node:   $(node --version)"
           } else {
-            Write-Output "[ERR] Node 未安装"
+            Write-Output "[ERR] Node not installed"
             $pass = $false
           }
 
           if (Get-Command git -EA SilentlyContinue) {
             Write-Output "[OK]  Git:    $(git --version)"
           } else {
-            Write-Output "[ERR] Git 未安装"
+            Write-Output "[ERR] Git not installed"
             $pass = $false
           }
 
           if (Get-Command claude -EA SilentlyContinue) {
             Write-Output "[OK]  Claude: $(claude --version)"
           } else {
-            Write-Output "[ERR] Claude CLI 未安装"
+            Write-Output "[ERR] Claude CLI not installed"
             $pass = $false
           }
 
-          # 验证 config.json 是否存在（API 配置写入路径）
           $cfgPath = "$env:USERPROFILE\.claude\config.json"
           if (Test-Path $cfgPath) {
-            Write-Output "[OK]  ~/.claude/config.json 存在"
+            Write-Output "[OK]  ~/.claude/config.json exists"
             Get-Content $cfgPath
           } else {
-            Write-Output "[!!]  ~/.claude/config.json 不存在（用户跳过了 API 配置，属正常）"
+            Write-Output "[!!]  ~/.claude/config.json not found (user skipped API config, this is normal)"
           }
 
           if (-not $pass) { exit 1 }
