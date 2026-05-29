@@ -65,77 +65,112 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # ── download-artifact@v4 指定 path:. 直接解压到当前目录 ──
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: ClaudeQuickDown
+          path: .               # 关键：文件落到 .\ClaudeQuickDown.exe
+
+      # ── 确认文件存在（调试用）──────────────────
+      - name: List working directory
+        shell: powershell
+        run: |
+          Write-Output "=== 当前目录文件 ==="
+          Get-ChildItem -Force
+          $exe = ".\ClaudeQuickDown.exe"
+          if (Test-Path $exe) {
+            $mb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
+            Write-Output "exe found: $mb MB"
+          } else {
+            Write-Error "ClaudeQuickDown.exe NOT FOUND"; exit 1
+          }
 
       # ── 确认初始环境干净 ──────────────────────
       - name: Verify clean environment
         shell: powershell
         run: |
           Write-Output "=== 确认初始环境干净 ==="
-          Write-Output "Node:   $(if (Get-Command node   -EA SilentlyContinue) { node --version   } else { 'NOT FOUND (clean) [OK]' })"
-          Write-Output "Git:    $(if (Get-Command git    -EA SilentlyContinue) { git --version    } else { 'NOT FOUND (clean) [OK]' })"
-          Write-Output "Claude: $(if (Get-Command claude -EA SilentlyContinue) { claude --version } else { 'NOT FOUND (clean) [OK]' })"
+          Write-Output "Node:   $(if (Get-Command node   -EA SilentlyContinue) { node --version   } else { 'NOT FOUND [OK]' })"
+          Write-Output "Git:    $(if (Get-Command git    -EA SilentlyContinue) { git --version    } else { 'NOT FOUND [OK]' })"
+          Write-Output "Claude: $(if (Get-Command claude -EA SilentlyContinue) { claude --version } else { 'NOT FOUND [OK]' })"
 
-      # ── 运行安装器（模拟用户 stdin 输入）────────
-      # 输入顺序对应程序提示：
-      #   y     <- 确认开始安装
-      #   n     <- 跳过 cc-switch
-      #         <- 跳过 API Key（回车）
-      #         <- 跳过 Base URL（回车）
-      #         <- 跳过模型（回车）
-      #         <- 关闭窗口（回车）
-      - name: Run installer with simulated input
+      # ── 写 stdin 输入文件 ──────────────────────
+      # 顺序对应程序提示：
+      #   y   <- 确认开始安装
+      #   n   <- 跳过 cc-switch
+      #       <- 跳过 API Key（回车）
+      #       <- 跳过 Base URL（回车）
+      #       <- 跳过模型（回车）
+      #       <- 关闭窗口（回车）
+      - name: Prepare stdin input file
         shell: powershell
         run: |
-          $inputLines = @("y", "n", "", "", "", "")
-          $inputText  = $inputLines -join "`r`n"
-          $inputText | Out-File -FilePath ".\stdin_input.txt" -Encoding ascii
+          $lines = @("y", "n", "", "", "", "")
+          [System.IO.File]::WriteAllText(
+            "$PWD\stdin_input.txt",
+            ($lines -join "`r`n") + "`r`n",
+            [System.Text.Encoding]::ASCII
+          )
+          Write-Output "stdin_input.txt written"
+          Get-Content ".\stdin_input.txt" | ForEach-Object { Write-Output "  > $_" }
 
-          Write-Output "=== 开始运行安装器 ==="
+      # ── 运行安装器 ────────────────────────────
+      - name: Run installer
+        shell: powershell
+        run: |
+          Write-Output "=== 启动安装器 ==="
+          $exe    = Resolve-Path ".\ClaudeQuickDown.exe"
+          $stdin  = Resolve-Path ".\stdin_input.txt"
+          $stdout = "$PWD\install_stdout.txt"
+          $stderr = "$PWD\install_stderr.txt"
+
+          # 预创建输出文件，防止后续 step 找不到
+          "" | Out-File $stdout -Encoding utf8
+          "" | Out-File $stderr -Encoding utf8
+
           $proc = Start-Process `
-            -FilePath      ".\ClaudeQuickDown.exe" `
-            -RedirectStandardInput  ".\stdin_input.txt" `
-            -RedirectStandardOutput ".\install_stdout.txt" `
-            -RedirectStandardError  ".\install_stderr.txt" `
+            -FilePath               $exe `
+            -RedirectStandardInput  $stdin `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError  $stderr `
             -PassThru -NoNewWindow
 
-          # 最多等 20 分钟（Node + Git 下载安装）
+          # 最多等 20 分钟
           $done = $proc.WaitForExit(1200000)
           if (-not $done) {
             $proc.Kill()
-            Write-Output "=== 安装器超时（20min），输出如下 ==="
-            Get-Content ".\install_stdout.txt" -ErrorAction SilentlyContinue
+            Write-Output "=== 安装器超时 ==="
+            Get-Content $stdout -ErrorAction SilentlyContinue
             exit 1
           }
           Write-Output "安装器退出，ExitCode = $($proc.ExitCode)"
-        continue-on-error: true   # 即使安装器异常退出，也继续跑验证步骤
+        continue-on-error: true
 
-      # ── 打印安装器完整输出（方便排查）────────────
+      # ── 打印安装器完整输出 ────────────────────
       - name: Print installer output
         if: always()
         shell: powershell
         run: |
-          Write-Output "=== 安装器 stdout ==="
+          Write-Output "=== stdout ==="
           Get-Content ".\install_stdout.txt" -ErrorAction SilentlyContinue
-          Write-Output "=== 安装器 stderr ==="
+          Write-Output "=== stderr ==="
           Get-Content ".\install_stderr.txt" -ErrorAction SilentlyContinue
 
-      # ── 刷新 PATH，让新装的工具可见 ──────────────
+      # ── 刷新 PATH ─────────────────────────────
       - name: Refresh PATH
+        if: always()
         shell: powershell
         run: |
-          $userPath   = [System.Environment]::GetEnvironmentVariable("Path", "User")
-          $systemPath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-          $env:Path   = "$systemPath;$userPath"
+          $u = [System.Environment]::GetEnvironmentVariable("Path","User")
+          $m = [System.Environment]::GetEnvironmentVariable("Path","Machine")
+          $merged = "$m;$u"
+          echo "PATH=$merged" >> $env:GITHUB_ENV
           Write-Output "PATH refreshed"
-          # 将刷新后的 PATH 写入 GITHUB_ENV，让后续 step 继承
-          echo "PATH=$env:Path" >> $env:GITHUB_ENV
 
-      # ── 验证安装结果 ──────────────────────────────
+      # ── 验证安装结果 ──────────────────────────
       - name: Check installation results
+        if: always()
         shell: powershell
         run: |
           Write-Output "=== 安装结果验证 ==="
@@ -162,18 +197,17 @@ jobs:
             $pass = $false
           }
 
-          # 验证 config.json 是否存在（API 配置写入路径）
           $cfgPath = "$env:USERPROFILE\.claude\config.json"
           if (Test-Path $cfgPath) {
             Write-Output "[OK]  ~/.claude/config.json 存在"
             Get-Content $cfgPath
           } else {
-            Write-Output "[!!]  ~/.claude/config.json 不存在（用户跳过了 API 配置，属正常）"
+            Write-Output "[!!]  ~/.claude/config.json 不存在（跳过 API 配置，属正常）"
           }
 
           if (-not $pass) { exit 1 }
 
-      # ── 上传日志供下载查看 ────────────────────────
+      # ── 上传日志 ──────────────────────────────
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -182,4 +216,5 @@ jobs:
           path: |
             install_stdout.txt
             install_stderr.txt
+          if-no-files-found: warn
           retention-days: 14
