@@ -130,7 +130,16 @@ async fn run_full_install() {
     let registry = mirror::mirror_to_npm_registry(&mirror);
     println!("     使用 NPM 镜像：{}", registry);
 
-    let npm_path = format!("{};{}", npm_global_str, env::var("PATH").unwrap_or_default());
+    // Node.js 刚装完，路径可能还没进当前进程 PATH
+    // 显式把 Node.js 安装目录 + npm global 目录都加进来
+    let nodejs_dir = r"C:\Program Files\nodejs";
+    let current_path = env::var("PATH").unwrap_or_default();
+    let npm_path = format!("{};{};{}", nodejs_dir, npm_global_str, current_path);
+
+    // 同步更新当前进程 PATH，让后续 Command 也能找到 node/npm
+    env::set_var("PATH", &npm_path);
+
+    // npm 在 Windows 上是 .cmd 脚本，必须通过 cmd /C 调用
     match Command::new("cmd")
         .args(["/C", "npm", "install", "-g", "@anthropic-ai/claude-code",
                &format!("--registry={}", registry)])
