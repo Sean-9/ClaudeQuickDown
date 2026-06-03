@@ -2,10 +2,17 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'          # 推送 v1.0.0 这类 tag 时自动触发
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
 
 jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: 编译
+  # ─────────────────────────────────────────────
   build-windows:
     name: Build Windows exe
     runs-on: windows-latest
@@ -31,6 +38,13 @@ jobs:
       - name: Build release
         run: cargo build --release --target x86_64-pc-windows-msvc
 
+      - name: Upload artifact for test
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeQuickDown
+          path: target/x86_64-pc-windows-msvc/release/ClaudeQuickDown.exe
+          retention-days: 1
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -42,3 +56,135 @@ jobs:
             3. 按照提示填写 API Key，然后回车开始安装
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # Job 2: 在干净 Windows 环境全流程测试
+  # ─────────────────────────────────────────────
+  test-windows:
+    name: Test on clean Windows
+    needs: build-windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ClaudeQuickDown
+
+      # ── 确认初始环境干净 ──────────────────────
+      - name: Verify clean environment
+        shell: powershell
+        run: |
+          Write-Output "=== Verify Clean Environment ==="
+          Write-Output "Node:   $(if (Get-Command node   -EA SilentlyContinue) { node --version   } else { 'NOT FOUND (clean) [OK]' })"
+          Write-Output "Git:    $(if (Get-Command git    -EA SilentlyContinue) { git --version    } else { 'NOT FOUND (clean) [OK]' })"
+          Write-Output "Claude: $(if (Get-Command claude -EA SilentlyContinue) { claude --version } else { 'NOT FOUND (clean) [OK]' })"
+
+      # ── 运行安装器（模拟用户 stdin 输入）────────
+      # 输入顺序对应程序提示：
+      #   y     <- 确认开始安装
+      #   n     <- 跳过 cc-switch
+      #         <- 跳过 API Key（回车）
+      #         <- 跳过 Base URL（回车）
+      #         <- 跳过模型（回车）
+      #         <- 关闭窗口（回车）
+      - name: Run installer with simulated input
+        shell: powershell
+        run: |
+          # 预先创建空文件，确保 upload-artifact 永远能找到日志文件
+          "" | Out-File -FilePath ".\install_stdout.txt" -Encoding utf8
+          "" | Out-File -FilePath ".\install_stderr.txt" -Encoding utf8
+
+          $inputLines = @("y", "n", "", "", "", "")
+          $inputText  = $inputLines -join "`r`n"
+          $inputText | Out-File -FilePath ".\stdin_input.txt" -Encoding ascii
+
+          Write-Output "=== Running Installer ==="
+          $proc = Start-Process `
+            -FilePath      ".\ClaudeQuickDown.exe" `
+            -RedirectStandardInput  ".\stdin_input.txt" `
+            -RedirectStandardOutput ".\install_stdout.txt" `
+            -RedirectStandardError  ".\install_stderr.txt" `
+            -PassThru -NoNewWindow
+
+          # 最多等 20 分钟（Node + Git 下载安装）
+          $done = $proc.WaitForExit(1200000)
+          if (-not $done) {
+            $proc.Kill()
+            Write-Output "=== Installer Timeout (20min), output below ==="
+            Get-Content ".\install_stdout.txt" -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Write-Output "Installer exited with code $($proc.ExitCode)"
+        continue-on-error: true   # 即使安装器异常退出，也继续跑验证步骤
+
+      # ── 打印安装器完整输出（方便排查）────────────
+      - name: Print installer output
+        if: always()
+        shell: powershell
+        run: |
+          Write-Output "=== Installer stdout ==="
+          Get-Content ".\install_stdout.txt" -ErrorAction SilentlyContinue
+          Write-Output "=== Installer stderr ==="
+          Get-Content ".\install_stderr.txt" -ErrorAction SilentlyContinue
+
+      # ── 刷新 PATH，让新装的工具可见 ──────────────
+      - name: Refresh PATH
+        shell: powershell
+        run: |
+          $userPath   = [System.Environment]::GetEnvironmentVariable("Path", "User")
+          $systemPath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+          $env:Path   = "$systemPath;$userPath"
+          Write-Output "PATH refreshed"
+          # 将刷新后的 PATH 写入 GITHUB_ENV，让后续 step 继承
+          "PATH=$env:Path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ── 验证安装结果 ──────────────────────────────
+      - name: Check installation results
+        shell: powershell
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          Write-Output "=== Installation Results ==="
+          $pass = $true
+
+          if (Get-Command node -EA SilentlyContinue) {
+            Write-Output "[OK]  Node:   $(node --version)"
+          } else {
+            Write-Output "[ERR] Node not installed"
+            $pass = $false
+          }
+
+          if (Get-Command git -EA SilentlyContinue) {
+            Write-Output "[OK]  Git:    $(git --version)"
+          } else {
+            Write-Output "[ERR] Git not installed"
+            $pass = $false
+          }
+
+          if (Get-Command claude -EA SilentlyContinue) {
+            Write-Output "[OK]  Claude: $(claude --version)"
+          } else {
+            Write-Output "[ERR] Claude CLI not installed"
+            $pass = $false
+          }
+
+          $cfgPath = "$env:USERPROFILE\.claude\config.json"
+          if (Test-Path $cfgPath) {
+            Write-Output "[OK]  ~/.claude/config.json exists"
+            Get-Content $cfgPath
+          } else {
+            Write-Output "[!!]  ~/.claude/config.json not found (user skipped API config, this is normal)"
+          }
+
+          if (-not $pass) { exit 1 }
+
+      # ── 上传日志供下载查看 ────────────────────────
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ github.ref_name }}
+          path: |
+            install_stdout.txt
+            install_stderr.txt
+          retention-days: 14
